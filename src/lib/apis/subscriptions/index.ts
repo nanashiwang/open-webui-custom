@@ -31,6 +31,10 @@ export const getSubscriptionPlans = async (token: string, includeInactive = true
 	return await request(`${WEBUI_API_BASE_URL}/subscriptions/plans?${searchParams.toString()}`, token);
 };
 
+export const getAvailableSubscriptionPlans = async (token: string) => {
+	return await request(`${WEBUI_API_BASE_URL}/subscriptions/available-plans`, token);
+};
+
 export const createSubscriptionPlan = async (token: string, plan: object) => {
 	return await request(`${WEBUI_API_BASE_URL}/subscriptions/plans`, token, {
 		method: 'POST',
@@ -47,6 +51,20 @@ export const updateSubscriptionPlan = async (token: string, planId: string, plan
 
 export const getMySubscription = async (token: string) => {
 	return await request(`${WEBUI_API_BASE_URL}/subscriptions/me`, token);
+};
+
+export const createSubscriptionCheckout = async (
+	token: string,
+	planId: string,
+	paymentType = ''
+) => {
+	return await request(`${WEBUI_API_BASE_URL}/subscriptions/checkout`, token, {
+		method: 'POST',
+		body: JSON.stringify({
+			plan_id: planId,
+			...(paymentType ? { payment_type: paymentType } : {})
+		})
+	});
 };
 
 export const getSubscriptionUsers = async (token: string, query = '', page = 1) => {

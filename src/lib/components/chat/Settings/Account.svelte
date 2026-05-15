@@ -4,7 +4,11 @@
 
 	import { user, config, settings } from '$lib/stores';
 	import { updateUserProfile, createAPIKey, getAPIKey, getSessionUser } from '$lib/apis/auths';
-	import { getMySubscription } from '$lib/apis/subscriptions';
+	import {
+		createSubscriptionCheckout,
+		getAvailableSubscriptionPlans,
+		getMySubscription
+	} from '$lib/apis/subscriptions';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 
 	import UpdatePassword from './Account/UpdatePassword.svelte';
@@ -41,11 +45,17 @@
 	let APIKey = '';
 	let APIKeyCopied = false;
 	let subscriptionSummary: any = null;
+	let availablePlans: any[] = [];
+	let checkoutLoadingPlanId = '';
 	let profileImageInputElement: HTMLInputElement;
 
 	const number = (value: any) => Number(value ?? 0).toLocaleString();
 	const limitText = (value: any) => (value ? number(value) : $i18n.t('Unlimited'));
 	const date = (value: any) => (value ? new Date(value * 1000).toLocaleDateString() : '-');
+	const priceText = (plan: any) =>
+		Number(plan?.price_cents ?? 0) > 0
+			? `${(Number(plan.price_cents) / 100).toFixed(2)} ${plan.currency ?? 'CNY'}`
+			: $i18n.t('Free');
 
 	const submitHandler = async () => {
 		if (name !== $user?.name) {
@@ -95,6 +105,25 @@
 		}
 	};
 
+	const buyPlanHandler = async (planId: string) => {
+		checkoutLoadingPlanId = planId;
+		const checkout = await createSubscriptionCheckout(localStorage.token, planId).catch((error) => {
+			toast.error(`${error}`);
+			return null;
+		});
+
+		if (checkout?.payment_url) {
+			window.location.href = checkout.payment_url;
+			return;
+		}
+
+		if (checkout?.subscription) {
+			subscriptionSummary = await getMySubscription(localStorage.token).catch(() => subscriptionSummary);
+			toast.success($i18n.t('Subscription activated.'));
+		}
+		checkoutLoadingPlanId = '';
+	};
+
 	onMount(async () => {
 		const user = await getSessionUser(localStorage.token).catch((error) => {
 			toast.error(`${error}`);
@@ -114,6 +143,7 @@
 
 		webhookUrl = $settings?.notifications?.webhook_url ?? '';
 		subscriptionSummary = await getMySubscription(localStorage.token).catch(() => null);
+		availablePlans = await getAvailableSubscriptionPlans(localStorage.token).catch(() => []);
 
 		// Only fetch API key if the feature is enabled and user has permission
 		if (
@@ -165,6 +195,36 @@
 								)}
 							</div>
 						</div>
+					</div>
+				</div>
+			{/if}
+
+			{#if availablePlans.length}
+				<div class="rounded-xl border border-gray-100 dark:border-gray-850 p-3 mt-3">
+					<div class="font-medium mb-2">{$i18n.t('Subscription plans')}</div>
+					<div class="grid gap-2">
+						{#each availablePlans as plan}
+							<div class="rounded-lg border border-gray-100 dark:border-gray-850 px-3 py-2 flex items-center justify-between gap-3">
+								<div class="min-w-0">
+									<div class="font-medium truncate">{plan.name}</div>
+									<div class="text-xs text-gray-500 truncate">{plan.description ?? ''}</div>
+									<div class="text-xs text-gray-500 mt-1">
+										{priceText(plan)} · {$i18n.t('Tokens')}: {limitText(plan.token_limit)} · {$i18n.t('Requests')}: {limitText(plan.request_limit)}
+									</div>
+								</div>
+								<button
+									class="shrink-0 rounded-lg bg-black text-white dark:bg-white dark:text-black px-3 py-1.5 text-xs disabled:opacity-60"
+									disabled={checkoutLoadingPlanId === plan.id}
+									on:click={() => buyPlanHandler(plan.id)}
+								>
+									{checkoutLoadingPlanId === plan.id
+										? $i18n.t('Loading...')
+										: subscriptionSummary?.plan?.id === plan.id
+											? $i18n.t('Renew')
+											: $i18n.t('Buy')}
+								</button>
+							</div>
+						{/each}
 					</div>
 				</div>
 			{/if}

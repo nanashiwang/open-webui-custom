@@ -1,6 +1,12 @@
+import hashlib
+import hmac
+import os
+from decimal import Decimal, InvalidOperation
 from typing import Optional
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +19,89 @@ from open_webui.utils.auth import get_admin_user, get_verified_user
 router = APIRouter()
 
 
+def get_epay_config() -> dict:
+    return {
+        'api_url': os.environ.get('EPAY_API_URL', '').rstrip('/'),
+        'pid': os.environ.get('EPAY_PID', ''),
+        'key': os.environ.get('EPAY_KEY', ''),
+        'payment_type': os.environ.get('EPAY_PAYMENT_TYPE', 'alipay'),
+        'sign_type': os.environ.get('EPAY_SIGN_TYPE', 'MD5'),
+    }
+
+
+def epay_is_configured() -> bool:
+    config = get_epay_config()
+    return bool(config['api_url'] and config['pid'] and config['key'])
+
+
+def epay_sign(params: dict, key: str) -> str:
+    filtered = {
+        k: str(v)
+        for k, v in params.items()
+        if k not in {'sign', 'sign_type'} and v is not None and str(v) != ''
+    }
+    sign_src = '&'.join([f'{k}={filtered[k]}' for k in sorted(filtered.keys())]) + key
+    return hashlib.md5(sign_src.encode('utf-8')).hexdigest()
+
+
+def verify_epay_sign(params: dict, key: str) -> bool:
+    sign = str(params.get('sign') or '').lower()
+    if not sign:
+        return False
+    return hmac.compare_digest(sign, epay_sign(params, key))
+
+
+def cents_to_money(amount_cents: int) -> str:
+    return f'{Decimal(max(0, int(amount_cents or 0))) / Decimal(100):.2f}'
+
+
+def money_to_cents(money: str) -> Optional[int]:
+    try:
+        return int((Decimal(str(money)).quantize(Decimal('0.01')) * 100).to_integral_value())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def get_public_base_url(request: Request) -> str:
+    app_config = getattr(request.app.state, 'config', None)
+    configured = os.environ.get('WEBUI_URL') or (getattr(app_config, 'WEBUI_URL', '') if app_config else '')
+    if configured:
+        return configured.rstrip('/')
+
+    proto = request.headers.get('x-forwarded-proto', request.url.scheme).split(',')[0].strip()
+    host = request.headers.get('x-forwarded-host') or request.headers.get('host') or request.url.netloc
+    return f'{proto}://{host}'.rstrip('/')
+
+
+def get_callback_url(request: Request, path: str, env_name: str) -> str:
+    override = os.environ.get(env_name, '')
+    if override:
+        return override
+    return f'{get_public_base_url(request)}/api/v1/subscriptions{path}'
+
+
+def epay_submit_url(api_url: str) -> str:
+    return api_url if api_url.endswith('.php') else f'{api_url}/submit.php'
+
+
+async def request_params(request: Request) -> dict:
+    params = dict(request.query_params)
+    if request.method.upper() == 'POST':
+        content_type = request.headers.get('content-type', '')
+        if 'application/json' in content_type:
+            body = await request.json()
+            params.update(body if isinstance(body, dict) else {})
+        else:
+            form = await request.form()
+            params.update({k: str(v) for k, v in form.items()})
+    return params
+
+
 class PlanForm(BaseModel):
     name: str
     description: Optional[str] = None
     price_cents: int = 0
-    currency: str = 'USD'
+    currency: str = 'CNY'
     interval: str = 'month'
     token_limit: Optional[int] = None
     request_limit: Optional[int] = None
@@ -57,6 +141,11 @@ class AssignSubscriptionForm(BaseModel):
     current_period_end: Optional[int] = None
 
 
+class CheckoutForm(BaseModel):
+    plan_id: str
+    payment_type: Optional[str] = None
+
+
 @router.get('/plans')
 async def get_plans(
     include_inactive: bool = Query(True),
@@ -64,6 +153,11 @@ async def get_plans(
     db: AsyncSession = Depends(get_async_session),
 ):
     return await Subscriptions.get_plans(include_inactive=include_inactive, db=db)
+
+
+@router.get('/available-plans')
+async def get_available_plans(user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)):
+    return await Subscriptions.get_plans(include_inactive=False, db=db)
 
 
 @router.post('/plans')
@@ -87,6 +181,113 @@ async def update_plan(
 @router.get('/me')
 async def get_my_subscription(user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)):
     return await Subscriptions.get_user_summary(user.id, db=db)
+
+
+@router.post('/checkout')
+async def create_checkout(
+    request: Request,
+    form_data: CheckoutForm,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    plan = await Subscriptions.get_plan_by_id(form_data.plan_id, db=db)
+    if not plan or not plan.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Plan not found')
+
+    if plan.price_cents <= 0:
+        subscription = await Subscriptions.assign_subscription(user_id=user.id, plan_id=plan.id, db=db)
+        return {'status': 'activated', 'subscription': subscription}
+    if plan.currency.upper() != 'CNY':
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='易支付仅支持 CNY 套餐')
+
+    if not epay_is_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='EPay is not configured')
+
+    config = get_epay_config()
+    client_ip = request.headers.get('x-forwarded-for', '').split(',')[0].strip()
+    client_ip = client_ip or (request.client.host if request.client else None)
+    order = await Subscriptions.create_payment_order(
+        user_id=user.id,
+        plan_id=plan.id,
+        amount_cents=plan.price_cents,
+        currency=plan.currency,
+        client_ip=client_ip,
+        db=db,
+    )
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Plan not found')
+
+    params = {
+        'pid': config['pid'],
+        'type': form_data.payment_type or config['payment_type'],
+        'out_trade_no': order.out_trade_no,
+        'notify_url': get_callback_url(request, '/epay/notify', 'EPAY_NOTIFY_URL'),
+        'return_url': get_callback_url(request, '/epay/return', 'EPAY_RETURN_URL'),
+        'name': plan.name,
+        'money': cents_to_money(order.amount_cents),
+        'clientip': client_ip,
+    }
+    params = {k: v for k, v in params.items() if v is not None and str(v) != ''}
+    params['sign'] = epay_sign(params, config['key'])
+    params['sign_type'] = config['sign_type']
+
+    return {
+        'status': 'pending',
+        'order': order,
+        'payment_url': f'{epay_submit_url(config["api_url"])}?{urlencode(params)}',
+        'params': params,
+    }
+
+
+async def handle_epay_paid(params: dict, db: AsyncSession) -> Optional[dict]:
+    config = get_epay_config()
+    if not epay_is_configured() or not verify_epay_sign(params, config['key']):
+        return None
+    if params.get('pid') and str(params.get('pid')) != str(config['pid']):
+        return None
+    if params.get('trade_status') != 'TRADE_SUCCESS':
+        return {'status': 'ignored'}
+
+    out_trade_no = params.get('out_trade_no')
+    if not out_trade_no:
+        return None
+
+    order = await Subscriptions.get_payment_order_by_out_trade_no(out_trade_no, db=db)
+    if not order:
+        return None
+
+    paid_cents = money_to_cents(params.get('money'))
+    if paid_cents is None or paid_cents != order.amount_cents:
+        return None
+
+    activated = await Subscriptions.activate_payment_order(
+        out_trade_no=out_trade_no,
+        trade_no=params.get('trade_no'),
+        raw_notify=params,
+        db=db,
+    )
+    if not activated:
+        return None
+
+    order, created, subscription = activated
+    return {'status': 'paid', 'order': order, 'created': created, 'subscription': subscription}
+
+
+@router.api_route('/epay/notify', methods=['GET', 'POST'])
+async def epay_notify(request: Request, db: AsyncSession = Depends(get_async_session)):
+    result = await handle_epay_paid(await request_params(request), db=db)
+    if not result:
+        return PlainTextResponse('FAIL', status_code=status.HTTP_400_BAD_REQUEST)
+    return PlainTextResponse('SUCCESS')
+
+
+@router.api_route('/epay/return', methods=['GET', 'POST'])
+async def epay_return(request: Request, db: AsyncSession = Depends(get_async_session)):
+    result = await handle_epay_paid(await request_params(request), db=db)
+    redirect_url = f'{get_public_base_url(request)}/'
+    if not result:
+        return RedirectResponse(f'{redirect_url}?subscription_payment=failed', status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(f'{redirect_url}?subscription_payment=success', status_code=status.HTTP_302_FOUND)
 
 
 @router.get('/users')

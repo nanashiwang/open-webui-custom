@@ -13,6 +13,9 @@ from open_webui.internal.db import Base, get_async_db_context
 
 SUBSCRIPTION_STATUS_ACTIVE = 'active'
 USAGE_EVENT_CHAT_COMPLETION = 'chat_completion'
+PAYMENT_PROVIDER_EPAY = 'epay'
+PAYMENT_STATUS_PENDING = 'pending'
+PAYMENT_STATUS_PAID = 'paid'
 
 
 class SubscriptionPlan(Base):
@@ -22,7 +25,7 @@ class SubscriptionPlan(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     price_cents = Column(Integer, nullable=False, default=0)
-    currency = Column(Text, nullable=False, default='USD')
+    currency = Column(Text, nullable=False, default='CNY')
     interval = Column(Text, nullable=False, default='month')
     token_limit = Column(BigInteger, nullable=True)
     request_limit = Column(BigInteger, nullable=True)
@@ -71,12 +74,31 @@ class UsageLedger(Base):
     )
 
 
+class PaymentOrder(Base):
+    __tablename__ = 'payment_order'
+
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, ForeignKey('user.id', ondelete='CASCADE'), nullable=False, index=True)
+    plan_id = Column(Text, ForeignKey('subscription_plan.id', ondelete='SET NULL'), nullable=True, index=True)
+    provider = Column(Text, nullable=False, default=PAYMENT_PROVIDER_EPAY)
+    out_trade_no = Column(Text, nullable=False, unique=True, index=True)
+    trade_no = Column(Text, nullable=True, index=True)
+    status = Column(Text, nullable=False, default=PAYMENT_STATUS_PENDING)
+    amount_cents = Column(Integer, nullable=False, default=0)
+    currency = Column(Text, nullable=False, default='CNY')
+    client_ip = Column(Text, nullable=True)
+    raw_notify = Column(JSON, nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    paid_at = Column(BigInteger, nullable=True)
+
+
 class SubscriptionPlanModel(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
     price_cents: int = 0
-    currency: str = 'USD'
+    currency: str = 'CNY'
     interval: str = 'month'
     token_limit: Optional[int] = None
     request_limit: Optional[int] = None
@@ -123,6 +145,25 @@ class UsageLedgerModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PaymentOrderModel(BaseModel):
+    id: str
+    user_id: str
+    plan_id: Optional[str] = None
+    provider: str = PAYMENT_PROVIDER_EPAY
+    out_trade_no: str
+    trade_no: Optional[str] = None
+    status: str = PAYMENT_STATUS_PENDING
+    amount_cents: int = 0
+    currency: str = 'CNY'
+    client_ip: Optional[str] = None
+    raw_notify: Optional[dict] = None
+    created_at: int
+    updated_at: int
+    paid_at: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -146,6 +187,19 @@ def add_months(timestamp: int, months: int = 1) -> int:
     return int(dt.replace(year=year, month=month, day=day).timestamp())
 
 
+def add_interval(timestamp: int, interval: Optional[str] = 'month') -> int:
+    interval = (interval or 'month').lower()
+    if interval == 'year':
+        return add_months(timestamp, 12)
+    if interval == 'quarter':
+        return add_months(timestamp, 3)
+    if interval == 'week':
+        return timestamp + 7 * 24 * 60 * 60
+    if interval == 'day':
+        return timestamp + 24 * 60 * 60
+    return add_months(timestamp, 1)
+
+
 class SubscriptionTable:
     async def create_plan(self, data: dict, db: Optional[AsyncSession] = None) -> SubscriptionPlanModel:
         async with get_async_db_context(db) as db:
@@ -155,7 +209,7 @@ class SubscriptionTable:
                 name=data['name'],
                 description=data.get('description'),
                 price_cents=int(data.get('price_cents') or 0),
-                currency=(data.get('currency') or 'USD').upper(),
+                currency=(data.get('currency') or 'CNY').upper(),
                 interval=data.get('interval') or 'month',
                 token_limit=data.get('token_limit'),
                 request_limit=data.get('request_limit'),
@@ -211,7 +265,7 @@ class SubscriptionTable:
 
             now = _now()
             start = current_period_start or now
-            end = current_period_end or add_months(start, 1)
+            end = current_period_end or add_interval(start, plan.interval)
 
             result = await db.execute(
                 select(UserSubscription).filter(
@@ -245,6 +299,125 @@ class SubscriptionTable:
             await db.commit()
             await db.refresh(subscription)
             return UserSubscriptionModel.model_validate(subscription)
+
+    async def create_payment_order(
+        self,
+        user_id: str,
+        plan_id: str,
+        amount_cents: int,
+        currency: str = 'CNY',
+        provider: str = PAYMENT_PROVIDER_EPAY,
+        client_ip: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[PaymentOrderModel]:
+        async with get_async_db_context(db) as db:
+            plan = await db.get(SubscriptionPlan, plan_id)
+            if not plan or not plan.is_active:
+                return None
+
+            now = _now()
+            order = PaymentOrder(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                plan_id=plan_id,
+                provider=provider,
+                out_trade_no=f'sub{now}{uuid.uuid4().hex[:10]}',
+                status=PAYMENT_STATUS_PENDING,
+                amount_cents=max(0, int(amount_cents or 0)),
+                currency=(currency or plan.currency or 'CNY').upper(),
+                client_ip=client_ip,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(order)
+            await db.commit()
+            await db.refresh(order)
+            return PaymentOrderModel.model_validate(order)
+
+    async def get_payment_order_by_out_trade_no(
+        self, out_trade_no: str, db: Optional[AsyncSession] = None
+    ) -> Optional[PaymentOrderModel]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(select(PaymentOrder).filter(PaymentOrder.out_trade_no == out_trade_no).limit(1))
+            order = result.scalars().first()
+            return PaymentOrderModel.model_validate(order) if order else None
+
+    async def activate_payment_order(
+        self,
+        out_trade_no: str,
+        trade_no: Optional[str] = None,
+        raw_notify: Optional[dict] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[tuple[PaymentOrderModel, bool, Optional[UserSubscriptionModel]]]:
+        async with get_async_db_context(db) as db:
+            now = _now()
+            paid_result = await db.execute(
+                update(PaymentOrder)
+                .filter(PaymentOrder.out_trade_no == out_trade_no, PaymentOrder.status != PAYMENT_STATUS_PAID)
+                .values(
+                    status=PAYMENT_STATUS_PAID,
+                    trade_no=trade_no,
+                    raw_notify=raw_notify,
+                    paid_at=now,
+                    updated_at=now,
+                )
+            )
+            created = bool(paid_result.rowcount)
+
+            result = await db.execute(select(PaymentOrder).filter(PaymentOrder.out_trade_no == out_trade_no).limit(1))
+            order = result.scalars().first()
+            if not order:
+                return None
+
+            subscription_model = None
+            if created:
+                plan = await db.get(SubscriptionPlan, order.plan_id)
+                if plan:
+                    active_result = await db.execute(
+                        select(UserSubscription)
+                        .filter(
+                            UserSubscription.user_id == order.user_id,
+                            UserSubscription.status == SUBSCRIPTION_STATUS_ACTIVE,
+                        )
+                        .order_by(UserSubscription.updated_at.desc())
+                        .limit(1)
+                    )
+                    existing = active_result.scalars().first()
+                    if existing:
+                        period_start = existing.current_period_start if existing.current_period_end > now else now
+                        period_end = add_interval(max(now, existing.current_period_end), plan.interval)
+                        existing.plan_id = order.plan_id
+                        existing.current_period_start = period_start
+                        existing.current_period_end = period_end
+                        existing.cancel_at_period_end = False
+                        existing.updated_at = now
+                        subscription = existing
+                    else:
+                        period_start = now
+                        period_end = add_interval(period_start, plan.interval)
+                        subscription = UserSubscription(
+                            id=str(uuid.uuid4()),
+                            user_id=order.user_id,
+                            plan_id=order.plan_id,
+                            status=SUBSCRIPTION_STATUS_ACTIVE,
+                            current_period_start=period_start,
+                            current_period_end=period_end,
+                            cancel_at_period_end=False,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        db.add(subscription)
+                    subscription_model = subscription
+
+            await db.commit()
+            await db.refresh(order)
+            if subscription_model:
+                await db.refresh(subscription_model)
+            return (
+                PaymentOrderModel.model_validate(order),
+                created,
+                UserSubscriptionModel.model_validate(subscription_model) if subscription_model else None,
+            )
 
     async def cancel_subscription(self, user_id: str, db: Optional[AsyncSession] = None) -> bool:
         async with get_async_db_context(db) as db:

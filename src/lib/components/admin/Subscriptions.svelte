@@ -24,7 +24,7 @@
 		name: '',
 		description: '',
 		price_cents: 0,
-		currency: 'USD',
+		currency: 'CNY',
 		token_limit: null,
 		request_limit: null,
 		model_ids: ''
@@ -35,6 +35,10 @@
 		limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
 	const date = (value: any) => (value ? new Date(value * 1000).toLocaleDateString() : '-');
 	const limitText = (value: any) => (value ? number(value) : $i18n.t('Unlimited'));
+	const priceText = (plan: any) =>
+		Number(plan?.price_cents ?? 0) > 0
+			? `${(Number(plan.price_cents) / 100).toFixed(2)} ${plan.currency ?? 'CNY'}`
+			: $i18n.t('Free');
 	const selectValue = (event: Event) => (event.currentTarget as HTMLSelectElement).value;
 
 	const load = async () => {
@@ -73,7 +77,7 @@
 			name: '',
 			description: '',
 			price_cents: 0,
-			currency: 'USD',
+			currency: 'CNY',
 			token_limit: null,
 			request_limit: null,
 			model_ids: ''
@@ -120,6 +124,10 @@
 				<input class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800" bind:value={newPlan.name} placeholder={$i18n.t('Name')} />
 				<input class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800" bind:value={newPlan.description} placeholder={$i18n.t('Description')} />
 				<div class="grid grid-cols-2 gap-2">
+					<input class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800" type="number" min="0" bind:value={newPlan.price_cents} placeholder={$i18n.t('Price cents')} />
+					<input class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800" bind:value={newPlan.currency} placeholder="CNY" />
+				</div>
+				<div class="grid grid-cols-2 gap-2">
 					<input class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800" type="number" min="0" bind:value={newPlan.token_limit} placeholder={$i18n.t('Token limit')} />
 					<input class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800" type="number" min="0" bind:value={newPlan.request_limit} placeholder={$i18n.t('Request limit')} />
 				</div>
@@ -134,6 +142,7 @@
 				<thead class="text-gray-500">
 					<tr>
 						<th class="py-2">{$i18n.t('Name')}</th>
+						<th class="py-2 text-right">{$i18n.t('Price')}</th>
 						<th class="py-2 text-right">{$i18n.t('Tokens')}</th>
 						<th class="py-2 text-right">{$i18n.t('Requests')}</th>
 						<th class="py-2 text-right">{$i18n.t('Status')}</th>
@@ -146,6 +155,7 @@
 								<div class="font-medium">{plan.name}</div>
 								<div class="text-gray-500">{plan.description ?? ''}</div>
 							</td>
+							<td class="py-2 text-right">{priceText(plan)}</td>
 							<td class="py-2 text-right">{limitText(plan.token_limit)}</td>
 							<td class="py-2 text-right">{limitText(plan.request_limit)}</td>
 							<td class="py-2 text-right">
