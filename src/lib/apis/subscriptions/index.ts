@@ -53,6 +53,17 @@ export const getMySubscription = async (token: string) => {
 	return await request(`${WEBUI_API_BASE_URL}/subscriptions/me`, token);
 };
 
+export const getEPayConfig = async (token: string) => {
+	return await request(`${WEBUI_API_BASE_URL}/subscriptions/epay/config`, token);
+};
+
+export const updateEPayConfig = async (token: string, config: object) => {
+	return await request(`${WEBUI_API_BASE_URL}/subscriptions/epay/config`, token, {
+		method: 'POST',
+		body: JSON.stringify(config)
+	});
+};
+
 export const createSubscriptionCheckout = async (
 	token: string,
 	planId: string,

@@ -1238,6 +1238,30 @@ except Exception:
 
 WEBUI_URL = PersistentConfig('WEBUI_URL', 'webui.url', os.environ.get('WEBUI_URL', ''))
 
+EPAY_API_URL = PersistentConfig('EPAY_API_URL', 'subscriptions.epay.api_url', os.environ.get('EPAY_API_URL', ''))
+EPAY_PID = PersistentConfig('EPAY_PID', 'subscriptions.epay.pid', os.environ.get('EPAY_PID', ''))
+EPAY_KEY = PersistentConfig('EPAY_KEY', 'subscriptions.epay.key', os.environ.get('EPAY_KEY', ''))
+EPAY_PAYMENT_TYPE = PersistentConfig(
+    'EPAY_PAYMENT_TYPE',
+    'subscriptions.epay.payment_type',
+    os.environ.get('EPAY_PAYMENT_TYPE', 'alipay'),
+)
+EPAY_SIGN_TYPE = PersistentConfig(
+    'EPAY_SIGN_TYPE',
+    'subscriptions.epay.sign_type',
+    os.environ.get('EPAY_SIGN_TYPE', 'MD5'),
+)
+EPAY_NOTIFY_URL = PersistentConfig(
+    'EPAY_NOTIFY_URL',
+    'subscriptions.epay.notify_url',
+    os.environ.get('EPAY_NOTIFY_URL', ''),
+)
+EPAY_RETURN_URL = PersistentConfig(
+    'EPAY_RETURN_URL',
+    'subscriptions.epay.return_url',
+    os.environ.get('EPAY_RETURN_URL', ''),
+)
+
 
 ENABLE_SIGNUP = PersistentConfig(
     'ENABLE_SIGNUP',

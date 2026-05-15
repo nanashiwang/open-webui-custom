@@ -2,12 +2,15 @@
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import {
 		assignSubscription,
 		cancelSubscription,
 		createSubscriptionPlan,
+		getEPayConfig,
 		getSubscriptionPlans,
 		getSubscriptionUsers,
+		updateEPayConfig,
 		updateSubscriptionPlan
 	} from '$lib/apis/subscriptions';
 
@@ -19,6 +22,15 @@
 	let total = 0;
 	let query = '';
 	let page = 1;
+	let epayConfig: any = {
+		EPAY_API_URL: '',
+		EPAY_PID: '',
+		EPAY_KEY: '',
+		EPAY_PAYMENT_TYPE: 'alipay',
+		EPAY_SIGN_TYPE: 'MD5',
+		EPAY_NOTIFY_URL: '',
+		EPAY_RETURN_URL: ''
+	};
 
 	let newPlan: any = {
 		name: '',
@@ -45,6 +57,7 @@
 		loading = true;
 		try {
 			plans = await getSubscriptionPlans(localStorage.token);
+			epayConfig = await getEPayConfig(localStorage.token);
 			const result = await getSubscriptionUsers(localStorage.token, query, page);
 			users = result?.items ?? [];
 			total = result?.total ?? 0;
@@ -92,6 +105,17 @@
 		await load();
 	};
 
+	const saveEPayConfig = async () => {
+		const res = await updateEPayConfig(localStorage.token, epayConfig).catch((err) => {
+			toast.error(`${err}`);
+			return null;
+		});
+		if (res) {
+			epayConfig = res;
+			toast.success($i18n.t('Payment settings updated'));
+		}
+	};
+
 	const assign = async (userId: string, planId: string) => {
 		if (!planId) return;
 		await assignSubscription(localStorage.token, userId, planId).catch((err) => toast.error(`${err}`));
@@ -114,7 +138,74 @@
 				{$i18n.t('Manage plans, quotas, and user usage.')}
 			</div>
 		</div>
-		{#if loading}<Spinner className="size-5" />{/if}
+	{#if loading}<Spinner className="size-5" />{/if}
+	</div>
+
+	<div class="rounded-xl border border-gray-100 dark:border-gray-850 p-3 mb-4">
+		<div class="flex items-center justify-between gap-3 mb-2">
+			<div>
+				<div class="font-medium">{$i18n.t('EPay')}</div>
+				<div class="text-xs text-gray-500">
+					{$i18n.t('Configure checkout and payment callbacks.')}
+				</div>
+			</div>
+			<div class="text-xs {epayConfig?.configured ? 'text-green-600' : 'text-gray-500'}">
+				{epayConfig?.configured ? $i18n.t('Configured') : $i18n.t('Not configured')}
+			</div>
+		</div>
+
+		<div class="grid md:grid-cols-2 gap-2">
+			<input
+				class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800"
+				bind:value={epayConfig.EPAY_API_URL}
+				placeholder={$i18n.t('EPay API URL')}
+			/>
+			<div class="grid grid-cols-2 gap-2">
+				<input
+					class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800"
+					bind:value={epayConfig.EPAY_PAYMENT_TYPE}
+					placeholder="alipay"
+				/>
+				<input
+					class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800"
+					bind:value={epayConfig.EPAY_SIGN_TYPE}
+					placeholder="MD5"
+				/>
+			</div>
+			<input
+				class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800"
+				bind:value={epayConfig.EPAY_PID}
+				placeholder={$i18n.t('Merchant ID')}
+			/>
+			<div class="w-full border rounded-lg px-3 py-2 dark:border-gray-800">
+				<SensitiveInput
+					id="epay-key"
+					placeholder={$i18n.t('Merchant Key')}
+					bind:value={epayConfig.EPAY_KEY}
+				/>
+			</div>
+			<input
+				class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800"
+				bind:value={epayConfig.EPAY_NOTIFY_URL}
+				placeholder={$i18n.t('Notify URL (optional)')}
+			/>
+			<input
+				class="w-full bg-transparent border rounded-lg px-3 py-2 dark:border-gray-800"
+				bind:value={epayConfig.EPAY_RETURN_URL}
+				placeholder={$i18n.t('Return URL (optional)')}
+			/>
+		</div>
+		<div class="flex items-center justify-between gap-3 mt-2">
+			<div class="text-xs text-gray-500">
+				{$i18n.t('Leave callback URLs empty to use WebUI URL automatically.')}
+			</div>
+			<button
+				class="rounded-lg bg-black text-white dark:bg-white dark:text-black px-3 py-2 text-xs"
+				on:click={saveEPayConfig}
+			>
+				{$i18n.t('Save')}
+			</button>
+		</div>
 	</div>
 
 	<div class="grid lg:grid-cols-3 gap-3 mb-4">

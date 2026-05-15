@@ -459,6 +459,13 @@ from open_webui.config import (
     FRONTEND_BUILD_DIR,
     CORS_ALLOW_ORIGIN,
     DEFAULT_LOCALE,
+    EPAY_API_URL,
+    EPAY_KEY,
+    EPAY_NOTIFY_URL,
+    EPAY_PAYMENT_TYPE,
+    EPAY_PID,
+    EPAY_RETURN_URL,
+    EPAY_SIGN_TYPE,
     OAUTH_PROVIDERS,
     WEBUI_URL,
     RESPONSE_WATERMARK,
@@ -878,6 +885,13 @@ app.state.BASE_MODELS = []
 ########################################
 
 app.state.config.WEBUI_URL = WEBUI_URL
+app.state.config.EPAY_API_URL = EPAY_API_URL
+app.state.config.EPAY_PID = EPAY_PID
+app.state.config.EPAY_KEY = EPAY_KEY
+app.state.config.EPAY_PAYMENT_TYPE = EPAY_PAYMENT_TYPE
+app.state.config.EPAY_SIGN_TYPE = EPAY_SIGN_TYPE
+app.state.config.EPAY_NOTIFY_URL = EPAY_NOTIFY_URL
+app.state.config.EPAY_RETURN_URL = EPAY_RETURN_URL
 app.state.config.ENABLE_SIGNUP = ENABLE_SIGNUP
 app.state.config.ENABLE_LOGIN_FORM = ENABLE_LOGIN_FORM
 app.state.config.ENABLE_PASSWORD_CHANGE_FORM = ENABLE_PASSWORD_CHANGE_FORM

@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import os
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 from urllib.parse import urlencode
@@ -19,18 +18,20 @@ from open_webui.utils.auth import get_admin_user, get_verified_user
 router = APIRouter()
 
 
-def get_epay_config() -> dict:
+def get_epay_config(request: Request) -> dict:
+    app_config = getattr(request.app.state, 'config', None)
     return {
-        'api_url': os.environ.get('EPAY_API_URL', '').rstrip('/'),
-        'pid': os.environ.get('EPAY_PID', ''),
-        'key': os.environ.get('EPAY_KEY', ''),
-        'payment_type': os.environ.get('EPAY_PAYMENT_TYPE', 'alipay'),
-        'sign_type': os.environ.get('EPAY_SIGN_TYPE', 'MD5'),
+        'api_url': (getattr(app_config, 'EPAY_API_URL', '') if app_config else '').rstrip('/'),
+        'pid': getattr(app_config, 'EPAY_PID', '') if app_config else '',
+        'key': getattr(app_config, 'EPAY_KEY', '') if app_config else '',
+        'payment_type': getattr(app_config, 'EPAY_PAYMENT_TYPE', 'alipay') if app_config else 'alipay',
+        'sign_type': getattr(app_config, 'EPAY_SIGN_TYPE', 'MD5') if app_config else 'MD5',
+        'notify_url': getattr(app_config, 'EPAY_NOTIFY_URL', '') if app_config else '',
+        'return_url': getattr(app_config, 'EPAY_RETURN_URL', '') if app_config else '',
     }
 
 
-def epay_is_configured() -> bool:
-    config = get_epay_config()
+def epay_is_configured(config: dict) -> bool:
     return bool(config['api_url'] and config['pid'] and config['key'])
 
 
@@ -64,7 +65,7 @@ def money_to_cents(money: str) -> Optional[int]:
 
 def get_public_base_url(request: Request) -> str:
     app_config = getattr(request.app.state, 'config', None)
-    configured = os.environ.get('WEBUI_URL') or (getattr(app_config, 'WEBUI_URL', '') if app_config else '')
+    configured = getattr(app_config, 'WEBUI_URL', '') if app_config else ''
     if configured:
         return configured.rstrip('/')
 
@@ -73,10 +74,9 @@ def get_public_base_url(request: Request) -> str:
     return f'{proto}://{host}'.rstrip('/')
 
 
-def get_callback_url(request: Request, path: str, env_name: str) -> str:
-    override = os.environ.get(env_name, '')
+def get_callback_url(request: Request, path: str, override: str = '') -> str:
     if override:
-        return override
+        return override.rstrip('/')
     return f'{get_public_base_url(request)}/api/v1/subscriptions{path}'
 
 
@@ -146,6 +146,30 @@ class CheckoutForm(BaseModel):
     payment_type: Optional[str] = None
 
 
+class EPayConfigForm(BaseModel):
+    EPAY_API_URL: str = ''
+    EPAY_PID: str = ''
+    EPAY_KEY: str = ''
+    EPAY_PAYMENT_TYPE: str = 'alipay'
+    EPAY_SIGN_TYPE: str = 'MD5'
+    EPAY_NOTIFY_URL: str = ''
+    EPAY_RETURN_URL: str = ''
+
+
+def epay_config_response(request: Request) -> dict:
+    config = get_epay_config(request)
+    return {
+        'EPAY_API_URL': config['api_url'],
+        'EPAY_PID': config['pid'],
+        'EPAY_KEY': config['key'],
+        'EPAY_PAYMENT_TYPE': config['payment_type'],
+        'EPAY_SIGN_TYPE': config['sign_type'],
+        'EPAY_NOTIFY_URL': config['notify_url'],
+        'EPAY_RETURN_URL': config['return_url'],
+        'configured': epay_is_configured(config),
+    }
+
+
 @router.get('/plans')
 async def get_plans(
     include_inactive: bool = Query(True),
@@ -183,6 +207,23 @@ async def get_my_subscription(user=Depends(get_verified_user), db: AsyncSession 
     return await Subscriptions.get_user_summary(user.id, db=db)
 
 
+@router.get('/epay/config')
+async def get_epay_settings(request: Request, user=Depends(get_admin_user)):
+    return epay_config_response(request)
+
+
+@router.post('/epay/config')
+async def update_epay_settings(request: Request, form_data: EPayConfigForm, user=Depends(get_admin_user)):
+    request.app.state.config.EPAY_API_URL = form_data.EPAY_API_URL.rstrip('/')
+    request.app.state.config.EPAY_PID = form_data.EPAY_PID
+    request.app.state.config.EPAY_KEY = form_data.EPAY_KEY
+    request.app.state.config.EPAY_PAYMENT_TYPE = form_data.EPAY_PAYMENT_TYPE or 'alipay'
+    request.app.state.config.EPAY_SIGN_TYPE = form_data.EPAY_SIGN_TYPE or 'MD5'
+    request.app.state.config.EPAY_NOTIFY_URL = form_data.EPAY_NOTIFY_URL.rstrip('/')
+    request.app.state.config.EPAY_RETURN_URL = form_data.EPAY_RETURN_URL.rstrip('/')
+    return epay_config_response(request)
+
+
 @router.post('/checkout')
 async def create_checkout(
     request: Request,
@@ -200,10 +241,10 @@ async def create_checkout(
     if plan.currency.upper() != 'CNY':
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='易支付仅支持 CNY 套餐')
 
-    if not epay_is_configured():
+    config = get_epay_config(request)
+    if not epay_is_configured(config):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='EPay is not configured')
 
-    config = get_epay_config()
     client_ip = request.headers.get('x-forwarded-for', '').split(',')[0].strip()
     client_ip = client_ip or (request.client.host if request.client else None)
     order = await Subscriptions.create_payment_order(
@@ -221,8 +262,8 @@ async def create_checkout(
         'pid': config['pid'],
         'type': form_data.payment_type or config['payment_type'],
         'out_trade_no': order.out_trade_no,
-        'notify_url': get_callback_url(request, '/epay/notify', 'EPAY_NOTIFY_URL'),
-        'return_url': get_callback_url(request, '/epay/return', 'EPAY_RETURN_URL'),
+        'notify_url': get_callback_url(request, '/epay/notify', config['notify_url']),
+        'return_url': get_callback_url(request, '/epay/return', config['return_url']),
         'name': plan.name,
         'money': cents_to_money(order.amount_cents),
         'clientip': client_ip,
@@ -239,9 +280,9 @@ async def create_checkout(
     }
 
 
-async def handle_epay_paid(params: dict, db: AsyncSession) -> Optional[dict]:
-    config = get_epay_config()
-    if not epay_is_configured() or not verify_epay_sign(params, config['key']):
+async def handle_epay_paid(request: Request, params: dict, db: AsyncSession) -> Optional[dict]:
+    config = get_epay_config(request)
+    if not epay_is_configured(config) or not verify_epay_sign(params, config['key']):
         return None
     if params.get('pid') and str(params.get('pid')) != str(config['pid']):
         return None
@@ -275,7 +316,7 @@ async def handle_epay_paid(params: dict, db: AsyncSession) -> Optional[dict]:
 
 @router.api_route('/epay/notify', methods=['GET', 'POST'])
 async def epay_notify(request: Request, db: AsyncSession = Depends(get_async_session)):
-    result = await handle_epay_paid(await request_params(request), db=db)
+    result = await handle_epay_paid(request, await request_params(request), db=db)
     if not result:
         return PlainTextResponse('FAIL', status_code=status.HTTP_400_BAD_REQUEST)
     return PlainTextResponse('SUCCESS')
@@ -283,7 +324,7 @@ async def epay_notify(request: Request, db: AsyncSession = Depends(get_async_ses
 
 @router.api_route('/epay/return', methods=['GET', 'POST'])
 async def epay_return(request: Request, db: AsyncSession = Depends(get_async_session)):
-    result = await handle_epay_paid(await request_params(request), db=db)
+    result = await handle_epay_paid(request, await request_params(request), db=db)
     redirect_url = f'{get_public_base_url(request)}/'
     if not result:
         return RedirectResponse(f'{redirect_url}?subscription_payment=failed', status_code=status.HTTP_302_FOUND)
