@@ -7,6 +7,17 @@ COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yaml"
 
 cd "$APP_DIR"
 
+compose_up() {
+  if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+  else
+    echo "镜像拉取失败，改为在服务器本地构建..."
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+  fi
+  docker image prune -f >/dev/null
+  docker ps --filter name=open-webui
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   SECRET="$(openssl rand -hex 32 2>/dev/null || python3 - <<'PY'
 import secrets
@@ -24,19 +35,13 @@ fi
 
 case "${1:-update}" in
   install|up)
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
-    docker image prune -f >/dev/null
-    docker ps --filter name=open-webui
+    compose_up
     ;;
   update)
     if [[ -d "$APP_DIR/.git" ]]; then
       git -C "$APP_DIR" pull --ff-only "${APP_GIT_REMOTE:-origin}" "${APP_GIT_BRANCH:-main}"
     fi
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
-    docker image prune -f >/dev/null
-    docker ps --filter name=open-webui
+    compose_up
     ;;
   install-command|link)
     ln -sf "$APP_DIR/open" /usr/local/bin/open

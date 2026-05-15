@@ -1,5 +1,8 @@
 services:
   open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${WEBUI_IMAGE:-ghcr.io/nanashiwang/open-webui}:${WEBUI_DOCKER_TAG:-main}
     container_name: open-webui
     restart: unless-stopped
