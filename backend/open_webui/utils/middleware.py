@@ -70,6 +70,7 @@ from open_webui.utils.files import (
 from open_webui.models.users import UserModel
 from open_webui.models.functions import Functions
 from open_webui.models.models import Models
+from open_webui.models.subscriptions import Subscriptions
 
 from open_webui.retrieval.utils import get_sources_from_items
 
@@ -145,6 +146,45 @@ from open_webui.constants import TASKS
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
+
+
+def _usage_text(value) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return ' '.join(_usage_text(item) for item in value)
+    if isinstance(value, dict):
+        return ' '.join(_usage_text(v) for v in value.values())
+    return str(value)
+
+
+async def record_subscription_usage(
+    user, form_data: dict, metadata: dict, usage: Optional[dict], response_content: Optional[str] = None
+) -> None:
+    try:
+        estimated = not bool(usage)
+        if estimated:
+            prompt_text = ' '.join(_usage_text(message.get('content')) for message in form_data.get('messages', []))
+            input_tokens = max(0, len(prompt_text) // 4)
+            output_tokens = max(0, len(response_content or '') // 4)
+            usage = {
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'total_tokens': input_tokens + output_tokens,
+            }
+
+        await Subscriptions.record_usage(
+            user_id=user.id,
+            model_id=form_data.get('model'),
+            chat_id=metadata.get('chat_id'),
+            message_id=metadata.get('message_id'),
+            usage=usage or {},
+            estimated=estimated,
+        )
+    except Exception as e:
+        log.debug(f'Failed to record subscription usage: {e}')
 
 
 # We believe in one maker of all models, seen and unseen,
@@ -3495,6 +3535,7 @@ async def non_streaming_chat_response_handler(response, ctx):
 
                     # Save message in the database
                     usage = normalize_usage(response_data.get('usage', {}) or {})
+                    await record_subscription_usage(user, form_data, metadata, usage, content)
 
                     if not metadata['chat_id'].startswith('channel:'):
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -5050,6 +5091,7 @@ async def streaming_chat_response_handler(response, ctx):
                     'title': title,
                     **({'usage': usage} if usage else {}),
                 }
+                await record_subscription_usage(user, form_data, metadata, usage, data['content'])
 
                 if not metadata['chat_id'].startswith('channel:'):
                     if not ENABLE_REALTIME_CHAT_SAVE:

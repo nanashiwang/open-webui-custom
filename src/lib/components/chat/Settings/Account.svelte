@@ -4,6 +4,7 @@
 
 	import { user, config, settings } from '$lib/stores';
 	import { updateUserProfile, createAPIKey, getAPIKey, getSessionUser } from '$lib/apis/auths';
+	import { getMySubscription } from '$lib/apis/subscriptions';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 
 	import UpdatePassword from './Account/UpdatePassword.svelte';
@@ -39,7 +40,12 @@
 
 	let APIKey = '';
 	let APIKeyCopied = false;
+	let subscriptionSummary: any = null;
 	let profileImageInputElement: HTMLInputElement;
+
+	const number = (value: any) => Number(value ?? 0).toLocaleString();
+	const limitText = (value: any) => (value ? number(value) : $i18n.t('Unlimited'));
+	const date = (value: any) => (value ? new Date(value * 1000).toLocaleDateString() : '-');
 
 	const submitHandler = async () => {
 		if (name !== $user?.name) {
@@ -107,6 +113,7 @@
 		}
 
 		webhookUrl = $settings?.notifications?.webhook_url ?? '';
+		subscriptionSummary = await getMySubscription(localStorage.token).catch(() => null);
 
 		// Only fetch API key if the feature is enabled and user has permission
 		if (
@@ -134,6 +141,33 @@
 					{$i18n.t('Manage your account information.')}
 				</div>
 			</div>
+
+			{#if subscriptionSummary}
+				<div class="rounded-xl border border-gray-100 dark:border-gray-850 p-3 mt-3">
+					<div class="flex items-center justify-between gap-3">
+						<div>
+							<div class="text-sm font-medium">
+								{subscriptionSummary.plan?.name ?? $i18n.t('No active plan')}
+							</div>
+							<div class="text-xs text-gray-500">
+								{date(subscriptionSummary.period_start)} - {date(subscriptionSummary.period_end)}
+							</div>
+						</div>
+						<div class="text-right text-xs text-gray-500">
+							<div>
+								{$i18n.t('Tokens')}: {number(subscriptionSummary.usage?.total_tokens)} / {limitText(
+									subscriptionSummary.plan?.token_limit
+								)}
+							</div>
+							<div>
+								{$i18n.t('Requests')}: {number(subscriptionSummary.usage?.request_count)} / {limitText(
+									subscriptionSummary.plan?.request_limit
+								)}
+							</div>
+						</div>
+					</div>
+				</div>
+			{/if}
 
 			<!-- <div class=" text-sm font-medium">{$i18n.t('Account')}</div> -->
 

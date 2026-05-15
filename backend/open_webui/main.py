@@ -106,6 +106,7 @@ from open_webui.routers import (
     terminals,
     automations,
     calendar,
+    subscriptions,
 )
 
 from open_webui.routers.retrieval import (
@@ -121,6 +122,7 @@ from open_webui.internal.db import ScopedSession, engine, get_async_session
 
 from open_webui.models.functions import Functions
 from open_webui.models.models import Models
+from open_webui.models.subscriptions import Subscriptions
 from open_webui.models.users import UserModel, Users
 from open_webui.models.chats import Chats, ChatForm
 
@@ -1456,6 +1458,7 @@ app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])
 app.include_router(terminals.router, prefix='/api/v1/terminals', tags=['terminals'])
 app.include_router(automations.router, prefix='/api/v1/automations', tags=['automations'])
 app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])
+app.include_router(subscriptions.router, prefix='/api/v1/subscriptions', tags=['subscriptions'])
 
 # SCIM 2.0 API for identity management
 if ENABLE_SCIM:
@@ -1974,6 +1977,12 @@ async def chat_completion(
     async def process_chat(request, form_data, user, metadata, model, tasks=None):
         try:
             form_data, metadata, events = await process_chat_payload(request, form_data, user, metadata, model)
+
+            await Subscriptions.assert_can_use(
+                user.id,
+                user.role,
+                form_data.get('model'),
+            )
 
             response = await chat_completion_handler(request, form_data, user)
 
