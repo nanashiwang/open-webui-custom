@@ -39,7 +39,7 @@ case "${1:-update}" in
     docker ps --filter name=open-webui
     ;;
   install-command|link)
-    install -m 0755 "$APP_DIR/open" /usr/local/bin/open
+    ln -sf "$APP_DIR/open" /usr/local/bin/open
     echo "已安装命令：open update"
     ;;
   restart)
