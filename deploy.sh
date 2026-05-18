@@ -26,7 +26,7 @@ PY
 )"
   cat > "$ENV_FILE" <<ENV
 WEBUI_SECRET_KEY=$SECRET
-WEBUI_IMAGE=ghcr.io/nanashiwang/open-webui
+WEBUI_IMAGE=ghcr.io/nanashiwang/open-webui-custom
 WEBUI_DOCKER_TAG=main
 OPEN_WEBUI_PORT=3000
 ENV
