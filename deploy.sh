@@ -24,6 +24,44 @@ compose_up() {
   docker ps --filter name=open-webui
 }
 
+wait_webui() {
+  source "$ENV_FILE"
+  local port="${OPEN_WEBUI_PORT:-3000}"
+
+  echo "等待服务恢复..."
+  for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      echo "服务已恢复：http://127.0.0.1:${port}"
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "服务仍未就绪，请执行：open logs"
+  return 1
+}
+
+restart_webui() {
+  if docker ps -a --format '{{.Names}}' | grep -qx 'open-webui'; then
+    docker restart -t 2 open-webui >/dev/null
+  else
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+  fi
+
+  wait_webui
+  docker ps --filter name=open-webui
+}
+
+run_data_python() {
+  source "$ENV_FILE"
+  local image="${WEBUI_IMAGE:-ghcr.io/nanashiwang/open-webui-custom}:${WEBUI_DOCKER_TAG:-main}"
+
+  docker run --rm \
+    --entrypoint python \
+    -v open-webui:/app/backend/data \
+    "$image" "$@"
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   SECRET="$(openssl rand -hex 32 2>/dev/null || python3 - <<'PY'
 import secrets
@@ -48,7 +86,7 @@ fi
 
 set_signup() {
   local enabled="$1"
-  docker exec open-webui python - "$enabled" <<'PY'
+  run_data_python - "$enabled" <<'PY'
 import json
 import sqlite3
 import sys
@@ -72,7 +110,7 @@ conn.commit()
 conn.close()
 print("用户注册入口已" + ("开启" if enabled else "关闭"))
 PY
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart open-webui
+  restart_webui
 }
 
 case "${1:-update}" in
@@ -107,7 +145,7 @@ case "${1:-update}" in
         set_signup false
         ;;
       status)
-        docker exec open-webui python - <<'PY'
+        run_data_python - <<'PY'
 import json
 import sqlite3
 
