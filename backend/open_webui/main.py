@@ -662,9 +662,7 @@ async def lifespan(app: FastAPI):
 
     # Create admin account from env vars if specified and no users exist
     if WEBUI_ADMIN_EMAIL and WEBUI_ADMIN_PASSWORD:
-        if await create_admin_user(WEBUI_ADMIN_EMAIL, WEBUI_ADMIN_PASSWORD, WEBUI_ADMIN_NAME):
-            # Disable signup since we now have an admin
-            app.state.config.ENABLE_SIGNUP = False
+        await create_admin_user(WEBUI_ADMIN_EMAIL, WEBUI_ADMIN_PASSWORD, WEBUI_ADMIN_NAME)
 
     if SAFE_MODE:
         await Functions.deactivate_all_functions()

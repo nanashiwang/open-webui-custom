@@ -717,7 +717,6 @@ async def signup_handler(
     if await Users.get_num_users(db=db) == 1:
         await Users.update_user_role_by_id(user.id, 'admin', db=db)
         user = await Users.get_user_by_id(user.id, db=db)
-        request.app.state.config.ENABLE_SIGNUP = False
 
     if request.app.state.config.WEBHOOK_URL:
         await post_webhook(

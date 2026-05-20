@@ -12,6 +12,7 @@ services:
       - open-webui:/app/backend/data
     environment:
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?WEBUI_SECRET_KEY is required}
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
     extra_hosts:
       - host.docker.internal:host-gateway
 
