@@ -37,9 +37,7 @@ def epay_is_configured(config: dict) -> bool:
 
 def epay_sign(params: dict, key: str) -> str:
     filtered = {
-        k: str(v)
-        for k, v in params.items()
-        if k not in {'sign', 'sign_type'} and v is not None and str(v) != ''
+        k: str(v) for k, v in params.items() if k not in {'sign', 'sign_type'} and v is not None and str(v) != ''
     }
     sign_src = '&'.join([f'{k}={filtered[k]}' for k in sorted(filtered.keys())]) + key
     return hashlib.md5(sign_src.encode('utf-8')).hexdigest()

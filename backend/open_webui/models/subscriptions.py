@@ -5,7 +5,19 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import BigInteger, Boolean, Column, ForeignKey, Integer, JSON, Text, UniqueConstraint, func, select, update
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    ForeignKey,
+    Integer,
+    JSON,
+    Text,
+    UniqueConstraint,
+    func,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from open_webui.internal.db import Base, get_async_db_context
@@ -69,9 +81,7 @@ class UsageLedger(Base):
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint('chat_id', 'message_id', 'event_type', name='uq_usage_ledger_message_event'),
-    )
+    __table_args__ = (UniqueConstraint('chat_id', 'message_id', 'event_type', name='uq_usage_ledger_message_event'),)
 
 
 class PaymentOrder(Base):
@@ -223,7 +233,9 @@ class SubscriptionTable:
             await db.refresh(plan)
             return SubscriptionPlanModel.model_validate(plan)
 
-    async def update_plan(self, plan_id: str, data: dict, db: Optional[AsyncSession] = None) -> Optional[SubscriptionPlanModel]:
+    async def update_plan(
+        self, plan_id: str, data: dict, db: Optional[AsyncSession] = None
+    ) -> Optional[SubscriptionPlanModel]:
         async with get_async_db_context(db) as db:
             plan = await db.get(SubscriptionPlan, plan_id)
             if not plan:
@@ -241,7 +253,9 @@ class SubscriptionTable:
             plan = await db.get(SubscriptionPlan, plan_id)
             return SubscriptionPlanModel.model_validate(plan) if plan else None
 
-    async def get_plans(self, include_inactive: bool = True, db: Optional[AsyncSession] = None) -> list[SubscriptionPlanModel]:
+    async def get_plans(
+        self, include_inactive: bool = True, db: Optional[AsyncSession] = None
+    ) -> list[SubscriptionPlanModel]:
         async with get_async_db_context(db) as db:
             stmt = select(SubscriptionPlan).order_by(SubscriptionPlan.created_at.desc())
             if not include_inactive:
@@ -524,7 +538,9 @@ class SubscriptionTable:
             if latest and latest.status == SUBSCRIPTION_STATUS_ACTIVE and latest.current_period_end <= _now():
                 from fastapi import HTTPException, status
 
-                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail='订阅已过期，请续费后继续使用。')
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED, detail='订阅已过期，请续费后继续使用。'
+                )
             return
         if not plan or not plan.get('is_active', True):
             from fastapi import HTTPException, status
