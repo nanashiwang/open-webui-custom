@@ -8,12 +8,18 @@ COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yaml"
 cd "$APP_DIR"
 
 compose_up() {
-  if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull; then
+  source "$ENV_FILE"
+
+  if [[ "${LOCAL_BUILD:-}" == "true" || "${WEBUI_IMAGE:-}" != ghcr.io/* ]]; then
+    echo "使用服务器本地构建镜像..."
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+  elif docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull; then
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
   else
     echo "镜像拉取失败，改为在服务器本地构建..."
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
   fi
+
   docker image prune -f >/dev/null
   docker ps --filter name=open-webui
 }
